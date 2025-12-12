@@ -120,6 +120,8 @@
 </template>
 
 <script>
+import { InventoryItemsAPI } from '../services/api'
+
 export default {
   name: 'InventoryManagement',
   props: {
@@ -158,7 +160,7 @@ export default {
     }
   },
   methods: {
-    addItem() {
+    async addItem() {
       // 如果選擇自訂類型，使用自訂輸入的值
       let category = this.currentItem.category
       if (this.showCustomCategory) {
@@ -179,30 +181,99 @@ export default {
         return;
       }
       
-      this.items.push({ 
-        ...this.currentItem,
-        category: category
-      });
-      this.saveToLocalStorage();
-      
-      // 重置表單
-      this.currentItem = {
-        category: '',
-        name: '',
-        quantity: 0,
-        unit: 'kg',
-        totalPrice: 0,
-        purchaseDate: new Date().toISOString().split('T')[0],
-        expiryDate: ''
-      };
-      this.customCategory = ''
-      this.showCustomCategory = false
+      try {
+        // 準備要送到 API 的資料
+        const itemData = {
+          itemType: category,
+          name: this.currentItem.name,
+          quantity: parseFloat(this.currentItem.quantity),
+          unit: this.currentItem.unit,
+          totalPrice: parseFloat(this.currentItem.totalPrice),
+          purchaseDate: `${this.currentItem.purchaseDate}T00:00:00`,
+          expirationDate: this.currentItem.expiryDate ? `${this.currentItem.expiryDate}T00:00:00` : null
+        }
+        
+        console.log('準備發送的庫存資料:', itemData)
+        
+        // 呼叫 API 新增項目
+        await InventoryItemsAPI.create(itemData)
+        
+        console.log('庫存項目新增成功')
+        
+        // 重新載入項目
+        await this.loadItems()
+        
+        // 重置表單
+        this.currentItem = {
+          category: '',
+          name: '',
+          quantity: 0,
+          unit: 'kg',
+          totalPrice: 0,
+          purchaseDate: new Date().toISOString().split('T')[0],
+          expiryDate: ''
+        };
+        this.customCategory = ''
+        this.showCustomCategory = false
+      } catch (error) {
+        console.error('新增庫存項目失敗：', error)
+        alert('新增庫存項目失敗：' + error.message)
+      }
     },
-    deleteItem(item) {
-      const index = this.items.indexOf(item);
-      if (index > -1) {
-        this.items.splice(index, 1);
-        this.saveToLocalStorage();
+    async deleteItem(item) {
+      if (!confirm('確定要刪除這個庫存項目嗎？')) {
+        return;
+      }
+      
+      try {
+        // 呼叫 API 刪除項目
+        await InventoryItemsAPI.delete(item.id)
+        
+        console.log('庫存項目刪除成功')
+        
+        // 重新載入項目
+        await this.loadItems()
+      } catch (error) {
+        console.error('刪除庫存項目失敗：', error)
+        alert('刪除庫存項目失敗：' + error.message)
+      }
+    },
+    async loadItems() {
+      try {
+        // 從 API 取得所有庫存項目
+        const allItems = await InventoryItemsAPI.getAll()
+        
+        // 轉換格式
+        this.items = allItems.map(item => {
+          const purchaseDate = new Date(item.purchaseDate)
+          const expirationDate = item.expirationDate ? new Date(item.expirationDate) : null
+          
+          return {
+            id: item.id,
+            category: item.itemType || '其他',
+            name: item.name,
+            quantity: item.quantity,
+            unit: item.unit || 'kg',
+            totalPrice: item.totalPrice,
+            purchaseDate: purchaseDate.toISOString().split('T')[0],
+            expiryDate: expirationDate ? expirationDate.toISOString().split('T')[0] : ''
+          }
+        })
+        
+        // 更新分類列表
+        const types = [...new Set(this.items.map(item => item.category))]
+        this.categories = ['全部', ...types.filter(t => t && !['全部'].includes(t))]
+        
+        // 同步到 localStorage 作為備援
+        localStorage.setItem(`inventoryItems_${this.petId}`, JSON.stringify(this.items))
+      } catch (error) {
+        console.error('載入庫存項目失敗：', error)
+        
+        // 如果 API 失敗，從 localStorage 讀取
+        const saved = localStorage.getItem(`inventoryItems_${this.petId}`)
+        if (saved) {
+          this.items = JSON.parse(saved)
+        }
       }
     },
     getCategoryTotal(category) {
@@ -222,27 +293,10 @@ export default {
       const today = new Date();
       const expiry = new Date(expiryDate);
       return expiry < today;
-    },
-    saveToLocalStorage() {
-      localStorage.setItem(`inventoryItems_${this.petId}`, JSON.stringify(this.items));
-    },
-    loadFromLocalStorage() {
-      const saved = localStorage.getItem(`inventoryItems_${this.petId}`);
-      if (saved) {
-        this.items = JSON.parse(saved);
-        
-        // 從已有項目中提取所有獨特的分類
-        const existingCategories = [...new Set(this.items.map(item => item.category))]
-        existingCategories.forEach(cat => {
-          if (!this.categories.includes(cat) && cat !== '全部') {
-            this.categories.push(cat)
-          }
-        })
-      }
     }
   },
-  mounted() {
-    this.loadFromLocalStorage();
+  async mounted() {
+    await this.loadItems()
   }
 }
 </script>

@@ -85,6 +85,7 @@
 
 <script>
 import { Chart, registerables } from 'chart.js'
+import { MedicalRecordsAPI } from '../services/api'
 
 Chart.register(...registerables)
 
@@ -98,17 +99,19 @@ export default {
   },
   data() {
     return {
-      selectedPeriod: 7,
+      selectedPeriod: 'one-month',
       chartType: 'bar',
       periods: [
-        { label: '一週', value: 7 },
-        { label: '一個月', value: 30 },
-        { label: '三個月', value: 90 },
-        { label: '半年', value: 180 },
-        { label: '一年', value: 365 }
+        { label: '一週', value: 'one-week' },
+        { label: '一個月', value: 'one-month' },
+        { label: '三個月', value: 'three-months' },
+        { label: '半年', value: 'six-months' },
+        { label: '一年', value: 'one-year' }
       ],
       medicalRecords: [],
       inventoryItems: [],
+      expenseSummary: [], // API 統計資料：依月份+分類
+      expenseByPet: [],   // API 統計資料：依寵物
       charts: {
         total: null,
         medical: null,
@@ -119,6 +122,11 @@ export default {
   },
   computed: {
     totalMedical() {
+      // 優先使用 API 資料
+      if (this.expenseSummary.length > 0) {
+        return this.expenseSummary.reduce((sum, item) => sum + parseFloat(item.total || 0), 0)
+      }
+      // Fallback 到 localStorage
       return this.getFilteredMedical().reduce((sum, record) => sum + parseFloat(record.cost || 0), 0)
     },
     totalInventory() {
@@ -127,13 +135,48 @@ export default {
   },
   watch: {
     selectedPeriod() {
-      this.updateAllCharts()
+      this.loadApiData() // 重新載入 API 資料
     },
     chartType() {
       this.updateAllCharts()
     }
   },
   methods: {
+    async loadApiData() {
+      try {
+        console.log('[ExpenseChart] 載入 API 資料，period:', this.selectedPeriod)
+        
+        // 同時載入兩個 API
+        const [summary, byPet] = await Promise.all([
+          MedicalRecordsAPI.getExpenseSummary(this.selectedPeriod),
+          MedicalRecordsAPI.getExpenseByPet(this.selectedPeriod)
+        ])
+        
+        console.log('[ExpenseChart] expense-summary 回傳:', summary)
+        console.log('[ExpenseChart] expense-by-pet 回傳:', byPet)
+        
+        this.expenseSummary = Array.isArray(summary) ? summary : []
+        this.expenseByPet = Array.isArray(byPet) ? byPet : []
+        
+        console.log('[ExpenseChart] 已設定 expenseSummary:', this.expenseSummary.length, '筆')
+        console.log('[ExpenseChart] 已設定 expenseByPet:', this.expenseByPet.length, '筆')
+        
+        // 更新圖表
+        this.$nextTick(() => {
+          this.updateAllCharts()
+        })
+      } catch (error) {
+        console.error('[ExpenseChart] 載入 API 失敗:', error)
+        console.error('[ExpenseChart] 錯誤詳情:', error.message)
+        
+        // 如果 API 失敗，使用 localStorage 資料
+        this.expenseSummary = []
+        this.expenseByPet = []
+        this.$nextTick(() => {
+          this.updateAllCharts()
+        })
+      }
+    },
     loadData() {
       const medical = localStorage.getItem(`medicalRecords_${this.petId}`)
       const inventory = localStorage.getItem(`inventoryItems_${this.petId}`)
@@ -141,12 +184,23 @@ export default {
       this.medicalRecords = medical ? JSON.parse(medical) : []
       this.inventoryItems = inventory ? JSON.parse(inventory) : []
     },
+    getPeriodDays() {
+      const periodMap = {
+        'one-week': 7,
+        'one-month': 30,
+        'three-months': 90,
+        'six-months': 180,
+        'one-year': 365
+      }
+      return periodMap[this.selectedPeriod] || 30
+    },
     getFilteredMedical() {
       const today = new Date()
-      today.setHours(23, 59, 59, 999) // 設定為今天結束時間
+      today.setHours(23, 59, 59, 999)
       const cutoffDate = new Date(today)
-      cutoffDate.setDate(cutoffDate.getDate() - this.selectedPeriod)
-      cutoffDate.setHours(0, 0, 0, 0) // 設定為開始時間
+      const days = this.getPeriodDays()
+      cutoffDate.setDate(cutoffDate.getDate() - days)
+      cutoffDate.setHours(0, 0, 0, 0)
       
       return this.medicalRecords.filter(record => {
         if (!record.date) return false
@@ -158,7 +212,8 @@ export default {
       const today = new Date()
       today.setHours(23, 59, 59, 999)
       const cutoffDate = new Date(today)
-      cutoffDate.setDate(cutoffDate.getDate() - this.selectedPeriod)
+      const days = this.getPeriodDays()
+      cutoffDate.setDate(cutoffDate.getDate() - days)
       cutoffDate.setHours(0, 0, 0, 0)
       
       return this.inventoryItems.filter(item => {
@@ -171,15 +226,16 @@ export default {
       const labels = []
       const dates = []
       const today = new Date()
+      const days = this.getPeriodDays()
       
       // 根據期間決定標籤間隔
       let interval = 1
-      if (this.selectedPeriod === 30) interval = 3
-      else if (this.selectedPeriod === 90) interval = 7
-      else if (this.selectedPeriod === 180) interval = 14
-      else if (this.selectedPeriod === 365) interval = 30
+      if (days === 30) interval = 3
+      else if (days === 90) interval = 7
+      else if (days === 180) interval = 14
+      else if (days === 365) interval = 30
       
-      for (let i = this.selectedPeriod; i >= 0; i -= interval) {
+      for (let i = days; i >= 0; i -= interval) {
         const date = new Date(today)
         date.setDate(date.getDate() - i)
         dates.push(new Date(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -302,6 +358,87 @@ export default {
       })
     },
     updateAllCharts() {
+      // 優先使用 API 資料，若無則使用本地資料
+      if (this.expenseSummary.length > 0) {
+        this.updateChartsWithApiData()
+      } else {
+        this.updateChartsWithLocalData()
+      }
+    },
+    updateChartsWithApiData() {
+      console.log('[updateChartsWithApiData] expenseSummary:', this.expenseSummary)
+      
+      // 處理醫療分類資料 (expense-summary)
+      const categoryMap = new Map()
+      const monthSet = new Set()
+      
+      this.expenseSummary.forEach(item => {
+        const monthKey = `${item.year}-${String(item.month).padStart(2, '0')}`
+        monthSet.add(monthKey)
+        
+        if (!categoryMap.has(item.category)) {
+          categoryMap.set(item.category, new Map())
+        }
+        categoryMap.get(item.category).set(monthKey, item.total)
+      })
+      
+      // 使用月份作為標籤
+      const labels = Array.from(monthSet).sort()
+      console.log('[updateChartsWithApiData] 月份標籤:', labels)
+      
+      // 創建醫療圖表 - 多分類數據集
+      const datasets = Array.from(categoryMap.entries()).map(([category, monthData]) => {
+        const categoryColors = {
+          '預防接種': '#ff6384',
+          '健康檢查': '#36a2eb',
+          '手術': '#ffce56',
+          '藥物治療': '#4bc0c0',
+          '其他': '#9966ff'
+        }
+        const color = categoryColors[category] || '#ff9f40'
+        
+        return {
+          label: category,
+          data: labels.map(label => monthData.get(label) || 0),
+          backgroundColor: color,
+          borderColor: color,
+          borderWidth: 2,
+          tension: 0.3
+        }
+      })
+      
+      console.log('[updateChartsWithApiData] datasets:', datasets)
+      
+      if (datasets.length > 0) {
+        this.createMultiDatasetChart('medicalChart', '醫療花費（依分類）', labels, datasets)
+      } else {
+        console.warn('[updateChartsWithApiData] 無醫療資料，使用本地資料')
+        const filteredMedical = this.getFilteredMedical()
+        const medicalData = this.aggregateDataByDate(filteredMedical, 'date', 'cost')
+        const { labels: dateLabels } = this.generateDateLabels()
+        this.createChart('medicalChart', '醫療花費', medicalData, '#f44336')
+      }
+      
+      // 創建庫存花費圖表 (使用日期標籤)
+      const filteredInventory = this.getFilteredInventory()
+      const { labels: dateLabels } = this.generateDateLabels()
+      const inventoryData = this.aggregateDataByDate(filteredInventory, 'purchaseDate', 'totalPrice')
+      this.createChart('inventoryChart', '庫存花費', inventoryData, '#2196f3')
+      
+      // 計算總花費 (使用日期標籤)
+      const medicalByDate = this.aggregateDataByDate(this.getFilteredMedical(), 'date', 'cost')
+      const totalData = medicalByDate.map((val, idx) => val + inventoryData[idx])
+      this.createChart('totalChart', '總花費', totalData, '#42b983')
+      
+      // 創建醫療分類圖表
+      this.createMedicalCategoryChart()
+      
+      // 創建寵物分佈圖表
+      if (this.expenseByPet.length > 0) {
+        this.createPetExpenseChart()
+      }
+    },
+    updateChartsWithLocalData() {
       const filteredMedical = this.getFilteredMedical()
       const filteredInventory = this.getFilteredInventory()
       
@@ -327,6 +464,173 @@ export default {
       
       // 庫存分類圖表
       this.createCategoryChart()
+    },
+    createMultiDatasetChart(ref, label, labels, datasets) {
+      const ctx = this.$refs[ref]
+      if (!ctx) return
+      
+      if (this.charts[ref]) {
+        this.charts[ref].destroy()
+      }
+      
+      this.charts[ref] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: window.innerWidth < 768 ? 1.2 : 2,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: {
+                font: {
+                  size: 11
+                },
+                padding: 10
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': NT$ ' + context.parsed.y.toFixed(2)
+                }
+              },
+              padding: 12,
+              titleFont: {
+                size: 14
+              },
+              bodyFont: {
+                size: 13
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return 'NT$ ' + value
+                },
+                font: {
+                  size: 11
+                }
+              },
+              grid: {
+                color: 'rgba(0, 0, 0, 0.05)'
+              }
+            },
+            x: {
+              ticks: {
+                font: {
+                  size: 10
+                },
+                maxRotation: 45,
+                minRotation: 0
+              },
+              grid: {
+                display: false
+              }
+            }
+          }
+        }
+      })
+    },
+    createMedicalCategoryChart() {
+      const ctx = this.$refs.categoryChart
+      if (!ctx) return
+      
+      if (this.charts.category) {
+        this.charts.category.destroy()
+      }
+      
+      // 使用 API 資料
+      const categoryTotals = new Map()
+      this.expenseSummary.forEach(item => {
+        const current = categoryTotals.get(item.category) || 0
+        categoryTotals.set(item.category, current + item.total)
+      })
+      
+      const categories = Array.from(categoryTotals.keys())
+      const data = Array.from(categoryTotals.values())
+      
+      const colors = ['#ff6384', '#36a2eb', '#ffce56', '#4bc0c0', '#9966ff', '#ff9f40']
+      
+      this.charts.category = new Chart(ctx, {
+        type: this.chartType,
+        data: {
+          labels: categories,
+          datasets: [{
+            label: '花費金額',
+            data: data,
+            backgroundColor: colors.slice(0, categories.length),
+            borderColor: colors.slice(0, categories.length),
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: window.innerWidth < 768 ? 1.2 : 2,
+          indexAxis: window.innerWidth < 480 && categories.length > 5 ? 'y' : 'x',
+          plugins: {
+            legend: {
+              display: false
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.label + ': NT$ ' + context.parsed.y.toFixed(2)
+                }
+              },
+              padding: 12,
+              titleFont: {
+                size: 14
+              },
+              bodyFont: {
+                size: 13
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return 'NT$ ' + value
+                },
+                font: {
+                  size: 11
+                }
+              },
+              grid: {
+                color: 'rgba(0, 0, 0, 0.05)'
+              }
+            },
+            x: {
+              ticks: {
+                font: {
+                  size: 10
+                },
+                maxRotation: 45,
+                minRotation: 0
+              },
+              grid: {
+                display: false
+              }
+            }
+          }
+        }
+      })
+    },
+    createPetExpenseChart() {
+      // 這個方法為寵物分佈圖表預留
+      // 可以在 UI 上新增一個 canvas 來顯示
+      console.log('寵物花費分佈:', this.expenseByPet)
     },
     createCategoryChart() {
       const ctx = this.$refs.categoryChart
@@ -427,10 +731,9 @@ export default {
     }
   },
   mounted() {
+    console.log('[ExpenseChart] mounted, petId:', this.petId)
     this.loadData()
-    this.$nextTick(() => {
-      this.updateAllCharts()
-    })
+    this.loadApiData() // 載入 API 資料並自動更新圖表
   },
   beforeUnmount() {
     // 清理圖表
