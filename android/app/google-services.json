@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "494612863366",
+    "project_id": "petlife-3cedc",
+    "storage_bucket": "petlife-3cedc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:494612863366:android:506058a489d8ed643e3407",
+        "android_client_info": {
+          "package_name": "com.petlife.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "494612863366-h0js1aigvuam562jhc4938r6s1ar39ta.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.petlife.app",
+            "certificate_hash": "6c55c871fefb3771f5a3ad2ecf541d52ae9f34d6"
+          }
+        },
+        {
+          "client_id": "494612863366-kp94evrrrl0it5kl83742bnhccspsuc4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADB4EUX4HAFinNgfFm1wT9a46PkfkbpqA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "494612863366-kp94evrrrl0it5kl83742bnhccspsuc4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
