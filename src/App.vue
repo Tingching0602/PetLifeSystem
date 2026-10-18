@@ -9,7 +9,7 @@ import PetDiary from './components/PetDiary.vue'
 import ExpenseChart from './components/ExpenseChart.vue'
 import { auth } from './firebase'
 import { PetsAPI } from './services/api.js'
-import { getImageUrl, revokeImageUrl } from './utils/imageService'
+import { getImageUrl } from './utils/imageService'
 import { 
   onAuthStateChanged, 
   signOut,
@@ -46,7 +46,6 @@ const newPetWeightKg = ref('') // WeightKg
 const newPetNeutered = ref(false) // Neutered (boolean)
 const newPetMicrochipNumber = ref('') // MicrochipNumber
 const newPetColor = ref('') // Color
-const newPetAvatarUrl = ref('') // AvatarUrl
 const newPetNotes = ref('') // Notes
 const showPetInfo = ref(false)
 const selectedPetInfo = ref(null)
@@ -62,7 +61,6 @@ const editPetData = ref({
   neutered: false,
   microchipNumber: '',
   color: '',
-  avatarUrl: '',
   notes: ''
 })
 const editCustomType = ref('')
@@ -332,14 +330,14 @@ const addPet = async () => {
     neutered: newPetNeutered.value,
     microchipNumber: newPetMicrochipNumber.value.trim() || null,
     color: newPetColor.value.trim() || null,
-    avatarUrl: newPetAvatarUrl.value || null,
     notes: newPetNotes.value.trim() || null
   }
   
   try {
     // 呼叫 API 新增寵物
     const createdPet = await PetsAPI.create(newPet)
-    
+    console.log('[除錯] 新增寵物 API 回傳內容：', createdPet)
+
     // 使用 push 添加到列表，觸發響應式更新
     pets.value.push(createdPet)
     
@@ -365,7 +363,6 @@ const addPet = async () => {
     newPetNeutered.value = false
     newPetMicrochipNumber.value = ''
     newPetColor.value = ''
-    newPetAvatarUrl.value = ''
     newPetNotes.value = ''
   } catch (error) {
     console.error('新增寵物失敗：', error)
@@ -449,7 +446,6 @@ const startEditPet = () => {
     neutered: selectedPetInfo.value.neutered || false,
     microchipNumber: selectedPetInfo.value.microchipNumber || '',
     color: selectedPetInfo.value.color || '',
-    avatarUrl: selectedPetInfo.value.avatarUrl || '',
     notes: selectedPetInfo.value.notes || ''
   }
   
@@ -537,97 +533,6 @@ const saveEditPet = async () => {
   } catch (error) {
     console.error('更新寵物資料失敗：', error)
     alert('更新寵物資料失敗：' + error.message)
-  }
-}
-
-// 處理寵物照片上傳
-const handlePetPhotoUpload = (event) => {
-  const file = event.target.files[0]
-  if (file) {
-    // 檢查檔案大小（限制為 5MB）
-    if (file.size > 5 * 1024 * 1024) {
-      alert('檔案大小不能超過 5MB')
-      event.target.value = ''
-      return
-    }
-    
-    // 檢查檔案類型
-    if (!file.type.startsWith('image/')) {
-      alert('請上傳圖片檔案')
-      event.target.value = ''
-      return
-    }
-    
-    // 將圖片轉換為 Base64
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      newPetAvatarUrl.value = e.target.result
-    }
-    reader.readAsDataURL(file)
-  }
-}
-
-// 移除寵物照片
-const removePetPhoto = () => {
-  newPetAvatarUrl.value = ''
-  const fileInput = document.querySelector('.pet-photo-input')
-  if (fileInput) {
-    fileInput.value = ''
-  }
-}
-
-// 更新寵物照片（在詳細資訊視窗中）
-const updatePetPhoto = async (event) => {
-  const file = event.target.files[0]
-  if (file) {
-    if (file.size > 5 * 1024 * 1024) {
-      alert('檔案大小不能超過 5MB')
-      event.target.value = ''
-      return
-    }
-    
-    if (!file.type.startsWith('image/')) {
-      alert('請上傳圖片檔案')
-      event.target.value = ''
-      return
-    }
-    
-    try {
-      // 呼叫上傳寵物頭像 API
-      await PetsAPI.uploadAvatar(selectedPetInfo.value.id, file)
-      
-      console.log('照片上傳成功')
-      
-      // 上傳完成後，重新從 API 取得最新的完整資料
-      const latestPet = await PetsAPI.getById(selectedPetInfo.value.id)
-      
-      console.log('照片更新後從資料庫取得的最新資料：', latestPet)
-      
-      // 更新 pets 列表中的資料
-      const petIndex = pets.value.findIndex(p => p.id === selectedPetInfo.value.id)
-      if (petIndex !== -1) {
-        pets.value[petIndex] = latestPet
-        // 強制觸發響應式更新
-        pets.value = [...pets.value]
-        // 同步到 localStorage 作為備援
-        localStorage.setItem('petsList', JSON.stringify(pets.value))
-      }
-      
-      // 重新載入該寵物的頭貼圖片
-      if (latestPet.avatarUrl) {
-        petAvatarUrls.value[latestPet.id] = await getImageUrl(latestPet.avatarUrl)
-      }
-      
-      // 更新 selectedPetInfo 為最新資料
-      selectedPetInfo.value = latestPet
-      
-      // 清空 input
-      event.target.value = ''
-    } catch (error) {
-      console.error('更新寵物照片失敗：', error)
-      alert('更新寵物照片失敗：' + error.message)
-      event.target.value = ''
-    }
   }
 }
 
@@ -867,14 +772,6 @@ const deletePet = async (petId) => {
             <label>接回家日期（選填）</label>
             <input type="date" v-model="newPetAdoptDate" />
           </div>
-          <div class="form-group full-width">
-            <label>寵物照片（選填）</label>
-            <input type="file" @change="handlePetPhotoUpload" accept="image/*" class="pet-photo-input" />
-            <div v-if="newPetAvatarUrl" class="photo-preview-container">
-              <img :src="newPetAvatarUrl" alt="寵物照片預覽" class="pet-photo-preview" />
-              <button @click="removePetPhoto" type="button" class="btn-remove-photo-small">移除照片</button>
-            </div>
-          </div>
           <div class="form-group">
             <label>品種（選填）</label>
             <input type="text" v-model="newPetBreed" placeholder="例如：柴犬、波斯貓" />
@@ -920,10 +817,6 @@ const deletePet = async (petId) => {
               <img v-if="petAvatarUrls[selectedPetInfo.id]" :src="petAvatarUrls[selectedPetInfo.id]" class="pet-info-photo" :alt="selectedPetInfo.name" />
               <span v-else class="pet-info-icon">{{ getPetIcon(selectedPetInfo.species) }}</span>
             </div>
-            <label class="upload-photo-btn" v-if="!isEditingPet">
-              <input type="file" @change="updatePetPhoto" accept="image/*" style="display: none;" />
-              📷 {{ selectedPetInfo.avatarUrl ? '更換照片' : '上傳照片' }}
-            </label>
           </div>
           <h3 v-if="!isEditingPet">{{ selectedPetInfo.name }}</h3>
         </div>
@@ -1738,37 +1631,6 @@ const deletePet = async (petId) => {
   max-width: 450px;
 }
 
-.photo-preview-container {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-}
-
-.pet-photo-preview {
-  max-width: 100%;
-  max-height: 150px;
-  border-radius: 12px;
-  object-fit: contain;
-  border: 2px solid #e0e0e0;
-}
-
-.btn-remove-photo-small {
-  background: #f44336;
-  color: white;
-  padding: 5px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: background 0.3s;
-}
-
-.btn-remove-photo-small:hover {
-  background: #d32f2f;
-}
-
 .close-btn {
   position: absolute;
   top: 15px;
@@ -1826,22 +1688,6 @@ const deletePet = async (petId) => {
 .pet-info-icon {
   font-size: 60px;
   display: block;
-}
-
-.upload-photo-btn {
-  background: #42b983;
-  color: white;
-  padding: 6px 14px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  transition: all 0.3s;
-}
-
-.upload-photo-btn:hover {
-  background: #359268;
-  transform: translateY(-2px);
 }
 
 .pet-info-header h3 {

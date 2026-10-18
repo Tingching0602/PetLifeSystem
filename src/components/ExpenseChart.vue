@@ -30,29 +30,38 @@
       </div>
     </div>
 
-    <div class="charts-container">
+    <div v-if="isLoading" class="chart-loading">
+      <div class="spinner"></div>
+      <p>圖表資料載入中…</p>
+    </div>
+
+    <div v-else class="charts-container">
       <!-- 總花費圖表 -->
       <div class="chart-card">
         <h3>總花費趨勢</h3>
-        <canvas ref="totalChart"></canvas>
+        <p v-if="!hasAnyData" class="no-data-message">這段期間沒有花費紀錄</p>
+        <canvas v-show="hasAnyData" ref="totalChart"></canvas>
       </div>
 
       <!-- 醫療花費圖表 -->
       <div class="chart-card">
         <h3>醫療花費</h3>
-        <canvas ref="medicalChart"></canvas>
+        <p v-if="!hasAnyData" class="no-data-message">這段期間沒有花費紀錄</p>
+        <canvas v-show="hasAnyData" ref="medicalChart"></canvas>
       </div>
 
       <!-- 庫存花費圖表 -->
       <div class="chart-card">
         <h3>庫存花費（糧食、保健品、零食）</h3>
-        <canvas ref="inventoryChart"></canvas>
+        <p v-if="!hasAnyData" class="no-data-message">這段期間沒有花費紀錄</p>
+        <canvas v-show="hasAnyData" ref="inventoryChart"></canvas>
       </div>
 
       <!-- 庫存分類圖表 -->
       <div class="chart-card">
         <h3>庫存分類花費</h3>
-        <canvas ref="categoryChart"></canvas>
+        <p v-if="!hasAnyData" class="no-data-message">這段期間沒有花費紀錄</p>
+        <canvas v-show="hasAnyData" ref="categoryChart"></canvas>
       </div>
     </div>
 
@@ -112,6 +121,7 @@ export default {
       inventoryItems: [],
       expenseSummary: [], // API 統計資料：依月份+分類
       expenseByPet: [],   // API 統計資料：依寵物
+      isLoading: true,
       charts: {
         total: null,
         medical: null,
@@ -131,6 +141,12 @@ export default {
     },
     totalInventory() {
       return this.getFilteredInventory().reduce((sum, item) => sum + parseFloat(item.totalPrice || 0), 0)
+    },
+    hasAnyData() {
+      return this.expenseSummary.length > 0 ||
+        this.expenseByPet.length > 0 ||
+        this.getFilteredMedical().length > 0 ||
+        this.getFilteredInventory().length > 0
     }
   },
   watch: {
@@ -143,37 +159,38 @@ export default {
   },
   methods: {
     async loadApiData() {
+      this.isLoading = true
       try {
         console.log('[ExpenseChart] 載入 API 資料，period:', this.selectedPeriod)
-        
+
         // 同時載入兩個 API
         const [summary, byPet] = await Promise.all([
           MedicalRecordsAPI.getExpenseSummary(this.selectedPeriod),
           MedicalRecordsAPI.getExpenseByPet(this.selectedPeriod)
         ])
-        
+
         console.log('[ExpenseChart] expense-summary 回傳:', summary)
         console.log('[ExpenseChart] expense-by-pet 回傳:', byPet)
-        
+
         this.expenseSummary = Array.isArray(summary) ? summary : []
         this.expenseByPet = Array.isArray(byPet) ? byPet : []
-        
+
         console.log('[ExpenseChart] 已設定 expenseSummary:', this.expenseSummary.length, '筆')
         console.log('[ExpenseChart] 已設定 expenseByPet:', this.expenseByPet.length, '筆')
-        
-        // 更新圖表
-        this.$nextTick(() => {
-          this.updateAllCharts()
-        })
       } catch (error) {
         console.error('[ExpenseChart] 載入 API 失敗:', error)
         console.error('[ExpenseChart] 錯誤詳情:', error.message)
-        
+
         // 如果 API 失敗，使用 localStorage 資料
         this.expenseSummary = []
         this.expenseByPet = []
+      } finally {
+        this.isLoading = false
+        // 等 v-else 區塊的 canvas 真正渲染到 DOM 後再畫圖表
         this.$nextTick(() => {
-          this.updateAllCharts()
+          if (this.hasAnyData) {
+            this.updateAllCharts()
+          }
         })
       }
     },
@@ -812,6 +829,35 @@ h3 {
   grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
   gap: 20px;
   margin-bottom: 30px;
+}
+
+.chart-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding: 60px 20px;
+  color: #666;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e8f5e9;
+  border-top-color: #42b983;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.no-data-message {
+  text-align: center;
+  color: #999;
+  padding: 40px 0;
 }
 
 .chart-card {

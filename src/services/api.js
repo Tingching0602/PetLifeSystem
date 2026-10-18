@@ -107,42 +107,6 @@ export const PetsAPI = {
   delete: (id) => apiRequest(`/Pets/${id}`, {
     method: 'DELETE',
   }),
-
-  // 上傳寵物頭像
-  uploadAvatar: async (petId, file) => {
-    const url = `${API_BASE_URL}/Upload/pet-avatar/${petId}`
-    
-    // 取得 Firebase ID Token
-    const token = await getFirebaseToken()
-    
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    const headers = {}
-    
-    // 如果有 token，加入 Authorization header
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-    
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: headers,
-        body: formData,
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.message || `HTTP Error: ${response.status}`)
-      }
-      
-      return await response.json()
-    } catch (error) {
-      console.error('Upload Avatar Error:', error)
-      throw error
-    }
-  },
 }
 
 // ==================== MedicalRecords API ====================
