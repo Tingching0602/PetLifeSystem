@@ -20,6 +20,9 @@ import {
 
 const isLoggedIn = ref(false)
 const currentUser = ref(null)
+const isPetsLoading = ref(false) // 寵物列表是否正在載入
+const isPetsLoadSlow = ref(false) // 載入超過 3 秒時顯示提示
+const petsLoadError = ref('') // 載入寵物列表失敗時的錯誤訊息
 const showUserMenu = ref(false)
 const showPasswordChange = ref(false)
 const passwordChange = ref({
@@ -34,6 +37,7 @@ const currentPetId = ref(null)
 const pets = ref([])
 const petAvatarUrls = ref({}) // 儲存轉換後的寵物頭貼 URLs
 const showPetModal = ref(false)
+const isAddingPet = ref(false) // 防止重複送出
 const newPetName = ref('')
 const newPetSpecies = ref('狗') // Species
 const newPetBreed = ref('')
@@ -46,6 +50,7 @@ const newPetWeightKg = ref('') // WeightKg
 const newPetNeutered = ref(false) // Neutered (boolean)
 const newPetMicrochipNumber = ref('') // MicrochipNumber
 const newPetColor = ref('') // Color
+const newPetpassedAwayDate = ref('') // passedAwayDate（回天堂的日期）
 const newPetNotes = ref('') // Notes
 const showPetInfo = ref(false)
 const selectedPetInfo = ref(null)
@@ -61,10 +66,12 @@ const editPetData = ref({
   neutered: false,
   microchipNumber: '',
   color: '',
+  passedAwayDate: '',
   notes: ''
 })
 const editCustomType = ref('')
 const showEditCustomType = ref(false)
+
 
 // 監聽 Firebase 登入狀態
 onMounted(() => {
@@ -78,6 +85,7 @@ onMounted(() => {
     }
   })
 })
+
 
 const handleUserLoggedIn = (user) => {
   isLoggedIn.value = true
@@ -250,15 +258,26 @@ const handlePasswordChange = async () => {
   }
 }
 
+let slowLoadTimer = null
+
 const loadPetsData = async () => {
+  if (isPetsLoading.value) return // 避免重複發送相同請求
+
+  isPetsLoading.value = true
+  isPetsLoadSlow.value = false
+  petsLoadError.value = ''
+  slowLoadTimer = setTimeout(() => {
+    isPetsLoadSlow.value = true
+  }, 3000)
+
   try {
     // 從 API 載入寵物資料
     const apiPets = await PetsAPI.getAll()
     pets.value = apiPets
-    
+
     // 載入所有寵物的頭貼圖片
     await loadPetAvatars()
-    
+
     if (pets.value.length > 0) {
       const lastPetId = localStorage.getItem('lastSelectedPetId')
       currentPetId.value = lastPetId ? parseInt(lastPetId) : pets.value[0].id
@@ -275,7 +294,14 @@ const loadPetsData = async () => {
         const lastPetId = localStorage.getItem('lastSelectedPetId')
         currentPetId.value = lastPetId ? parseInt(lastPetId) : pets.value[0].id
       }
+    } else {
+      // 沒有離線備援資料，顯示錯誤狀態而非誤判為「沒有寵物」
+      petsLoadError.value = '資料載入失敗，請稍後再試'
     }
+  } finally {
+    clearTimeout(slowLoadTimer)
+    isPetsLoading.value = false
+    isPetsLoadSlow.value = false
   }
 }
 
@@ -304,11 +330,13 @@ watch(currentPetId, (newId) => {
 
 // 新增寵物
 const addPet = async () => {
+  if (isAddingPet.value) return // 防止重複送出
+
   if (!newPetName.value.trim()) {
     alert('請輸入寵物名字')
     return
   }
-  
+
   // 如果選擇自訂種類，使用自訂輸入的值
   let petSpecies = newPetSpecies.value
   if (showCustomType.value) {
@@ -330,24 +358,33 @@ const addPet = async () => {
     neutered: newPetNeutered.value,
     microchipNumber: newPetMicrochipNumber.value.trim() || null,
     color: newPetColor.value.trim() || null,
+    passedAwayDate: newPetpassedAwayDate.value || null,
     notes: newPetNotes.value.trim() || null
   }
-  
+
+  isAddingPet.value = true
   try {
     // 呼叫 API 新增寵物
     const createdPet = await PetsAPI.create(newPet)
-    console.log('[除錯] 新增寵物 API 回傳內容：', createdPet)
 
-    // 使用 push 添加到列表，觸發響應式更新
-    pets.value.push(createdPet)
-    
+    // 後端若沒回傳有效 id，改成重新抓整份列表同步，避免資料對不上、也避免後續操作中斷
+    let latestPet = createdPet
+    if (createdPet && createdPet.id) {
+      pets.value.push(createdPet)
+    } else {
+      pets.value = await PetsAPI.getAll()
+      latestPet = pets.value[pets.value.length - 1]
+    }
+
     // 同步到 localStorage 作為備援
     localStorage.setItem('petsList', JSON.stringify(pets.value))
-    
+
     // 設定為當前寵物
-    currentPetId.value = createdPet.id
-    localStorage.setItem('lastSelectedPetId', createdPet.id.toString())
-    
+    if (latestPet && latestPet.id) {
+      currentPetId.value = latestPet.id
+      localStorage.setItem('lastSelectedPetId', latestPet.id.toString())
+    }
+
     showPetModal.value = false
     
     // 重置表單
@@ -363,10 +400,13 @@ const addPet = async () => {
     newPetNeutered.value = false
     newPetMicrochipNumber.value = ''
     newPetColor.value = ''
+    newPetpassedAwayDate.value = ''
     newPetNotes.value = ''
   } catch (error) {
     console.error('新增寵物失敗：', error)
     alert('新增寵物失敗：' + error.message)
+  } finally {
+    isAddingPet.value = false
   }
 }
 
@@ -431,21 +471,28 @@ const closePetInfo = () => {
   isEditingPet.value = false
 }
 
+// API 回傳的日期時間字串（例如 2018-06-28T00:00:00）轉成 <input type="date"> 需要的 YYYY-MM-DD 格式
+const formatDateForInput = (value) => {
+  if (!value) return ''
+  return value.split('T')[0]
+}
+
 // 進入編輯模式
 const startEditPet = () => {
   if (!selectedPetInfo.value) return
-  
+
   editPetData.value = {
     name: selectedPetInfo.value.name,
     species: selectedPetInfo.value.species,
     breed: selectedPetInfo.value.breed || '',
     gender: selectedPetInfo.value.gender || '未知',
-    birthDate: selectedPetInfo.value.birthDate || '',
-    adoptDate: selectedPetInfo.value.adoptDate || '',
+    birthDate: formatDateForInput(selectedPetInfo.value.birthDate),
+    adoptDate: formatDateForInput(selectedPetInfo.value.adoptDate),
     weightKg: selectedPetInfo.value.weightKg || '',
     neutered: selectedPetInfo.value.neutered || false,
     microchipNumber: selectedPetInfo.value.microchipNumber || '',
     color: selectedPetInfo.value.color || '',
+    passedAwayDate: formatDateForInput(selectedPetInfo.value.passedAwayDate),
     notes: selectedPetInfo.value.notes || ''
   }
   
@@ -500,6 +547,7 @@ const saveEditPet = async () => {
     neutered: editPetData.value.neutered,
     microchipNumber: editPetData.value.microchipNumber.trim() || null,
     color: editPetData.value.color.trim() || null,
+    passedAwayDate: editPetData.value.passedAwayDate || null,
     notes: editPetData.value.notes.trim() || null
   }
   
@@ -707,27 +755,45 @@ const deletePet = async (petId) => {
 
     <!-- 寵物選擇區 -->
     <div class="pet-selector">
-      <div class="pet-selector-content">
-        <div class="pet-list">
-          <button 
-            v-for="pet in pets" 
-            :key="pet.id"
-            :class="['pet-btn', { active: currentPetId === pet.id }]"
-          >
-            <span class="pet-icon" @click.stop="showPetDetail(pet)">
-              <img v-if="petAvatarUrls[pet.id]" :src="petAvatarUrls[pet.id]" class="pet-avatar" :alt="pet.name" />
-              <span v-else>{{ getPetIcon(pet.species) }}</span>
-            </span>
-            <span class="pet-name" @click.stop="currentPetId = pet.id">{{ pet.name }}</span>
-          </button>
+      <Transition name="pets-fade" mode="out-in">
+        <!-- Loading：資料尚未載入完成 -->
+        <div v-if="isPetsLoading" key="loading" class="pets-status-state" role="status" aria-live="polite">
+          <span class="pets-status-spinner" aria-hidden="true"></span>
+          <span class="pets-status-text">正在載入毛孩資料... 🐾</span>
+          <span v-if="isPetsLoadSlow" class="pets-status-slow-text">資料讀取時間較長，請稍候...</span>
         </div>
-        <button @click="showPetModal = true" class="add-pet-btn">
-          ➕ 新增寵物
-        </button>
-      </div>
-      <div v-if="!currentPet && pets.length === 0" class="no-pet-message">
-        請先新增一隻寵物開始記錄 😊
-      </div>
+
+        <!-- Error：API 失敗、逾時或授權失敗 -->
+        <div v-else-if="petsLoadError" key="error" class="pets-status-state pets-status-error" role="alert">
+          <span class="pets-status-text">{{ petsLoadError }}</span>
+          <button @click="loadPetsData" class="pets-retry-btn">重新載入</button>
+        </div>
+
+        <!-- Success / Empty：API 已成功回應 -->
+        <div v-else key="loaded" class="pet-selector-loaded">
+          <div class="pet-selector-content">
+            <div class="pet-list">
+              <button
+                v-for="pet in pets"
+                :key="pet.id"
+                :class="['pet-btn', { active: currentPetId === pet.id }]"
+              >
+                <span class="pet-icon" @click.stop="showPetDetail(pet)">
+                  <img v-if="petAvatarUrls[pet.id]" :src="petAvatarUrls[pet.id]" class="pet-avatar" :alt="pet.name" />
+                  <span v-else>{{ getPetIcon(pet.species) }}</span>
+                </span>
+                <span class="pet-name" @click.stop="currentPetId = pet.id">{{ pet.name }}</span>
+              </button>
+            </div>
+            <button @click="showPetModal = true" class="add-pet-btn">
+              ➕ 新增寵物
+            </button>
+          </div>
+          <div v-if="pets.length === 0" class="no-pet-message">
+            請先新增一隻寵物開始記錄 😊
+          </div>
+        </div>
+      </Transition>
     </div>
 
     <!-- 新增寵物彈窗 -->
@@ -795,13 +861,17 @@ const deletePet = async (petId) => {
             <label>毛色（選填）</label>
             <input type="text" v-model="newPetColor" placeholder="例如：黑色、白色" />
           </div>
+          <div class="form-group">
+            <label>🌈 回天堂的日期（選填）</label>
+            <input type="date" v-model="newPetpassedAwayDate" />
+          </div>
           <div class="form-group full-width">
             <label>備註（選填）</label>
             <textarea v-model="newPetNotes" placeholder="記錄任何特殊註意事項" rows="3"></textarea>
           </div>
           <div class="modal-actions">
             <button @click="showPetModal = false" class="btn-cancel">取消</button>
-            <button @click="addPet" class="btn-confirm">確定</button>
+            <button @click="addPet" class="btn-confirm" :disabled="isAddingPet">{{ isAddingPet ? '新增中…' : '確定' }}</button>
           </div>
         </div>
       </div>
@@ -883,6 +953,10 @@ const deletePet = async (petId) => {
             <label>毛色（選填）</label>
             <input type="text" v-model="editPetData.color" placeholder="例如：黑色、白色" />
           </div>
+          <div class="form-group">
+            <label>🌈 回天堂的日期（選填）</label>
+            <input type="date" v-model="editPetData.passedAwayDate" />
+          </div>
           <div class="form-group full-width">
             <label>備註（選填）</label>
             <textarea v-model="editPetData.notes" placeholder="記錄任何特殊註意事項" rows="3"></textarea>
@@ -938,6 +1012,10 @@ const deletePet = async (petId) => {
           <div class="info-row" v-if="selectedPetInfo.color">
             <span class="info-label">毛色：</span>
             <span class="info-value">{{ selectedPetInfo.color }}</span>
+          </div>
+          <div class="info-row" v-if="selectedPetInfo.passedAwayDate">
+            <span class="info-label">🌈 回天堂的日期：</span>
+            <span class="info-value">{{ selectedPetInfo.passedAwayDate }}</span>
           </div>
           <div class="info-row" v-if="selectedPetInfo.notes">
             <span class="info-label">備註：</span>
@@ -1513,6 +1591,68 @@ const deletePet = async (petId) => {
   color: #999;
   font-size: 16px;
   padding: 10px;
+}
+
+.pets-status-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 10px;
+  color: #555;
+  font-size: 15px;
+}
+
+.pets-status-spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #d7f0e3;
+  border-top-color: #42b983;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pets-status-spin 0.8s linear infinite;
+}
+
+@keyframes pets-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pets-status-slow-text {
+  color: #999;
+  font-size: 13px;
+}
+
+.pets-status-error {
+  color: #d9534f;
+}
+
+.pets-retry-btn {
+  padding: 6px 16px;
+  background: #42b983;
+  color: white;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.pets-retry-btn:hover {
+  background: #359268;
+}
+
+.pets-fade-enter-active,
+.pets-fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+
+.pets-fade-enter-from,
+.pets-fade-leave-to {
+  opacity: 0;
 }
 
 .modal-overlay {
